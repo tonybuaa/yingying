@@ -17,7 +17,7 @@ namespace yingying
     {
         List<District> distList;
         List<BusinessSum> businessSumList;
-        string thisMonth;
+        string reportYear, reportMonth;
 
         public Form1()
         {
@@ -27,6 +27,14 @@ namespace yingying
 
         private void btnImport_Click(object sender, EventArgs e)
         {
+            string year = cbSourceYear.Text;
+            string month = cbSourceMonth.Text;
+
+            if (string.IsNullOrEmpty(year) || string.IsNullOrEmpty(month))
+            {
+                return;
+            }
+
             OpenFileDialog dlg = new OpenFileDialog();
             dlg.Multiselect = true;
 
@@ -42,6 +50,7 @@ namespace yingying
             Excel.Application excel = new Excel.Application();
             object missing = System.Reflection.Missing.Value;
             Excel.Workbook workbook;
+
             foreach (string file in dlg.FileNames)
             {
                 progressBar1.Value++;
@@ -51,244 +60,454 @@ namespace yingying
                 string distName = Path.GetFileNameWithoutExtension(file);
                 // 得到指定的工作表
 
-                FillDatabase(workbook, distName);
+                FillDatabase(workbook, distName, year, month);
 
                 workbook.Close(false);
             }
             MessageBox.Show("All file imported.");
         }
 
-        private void FillDatabase(Excel.Workbook workbook, string distName)
+        private void FillDatabase(Excel.Workbook workbook, string distName, string year, string month)
         {
-            string year = "2016", month = "1";
-            Excel.Worksheet worksheet1 = (Excel.Worksheet)workbook.Worksheets[1]; // 用人单位支付农民工工资情况统计表
+            int workSheetCount = workbook.Worksheets.Count;
+            Excel.Worksheet worksheet1, worksheet2, worksheet3;
+            if (workSheetCount < 2)
+            {
+                return;
+            }
+
+            worksheet1 = (Excel.Worksheet)workbook.Worksheets[1]; // 用人单位支付农民工工资情况统计表
+            worksheet2 = (Excel.Worksheet)workbook.Worksheets[2]; // 建筑施工企业拖欠农民工工资案件分类情况统计表
+
             int baseRow1, baseCol1;
             GetFirstSheetBasePosition(worksheet1, out baseRow1, out baseCol1);
+            int baseRow2, baseCol2;
+            GetSecondSheetBasePosition(worksheet2, out baseRow2, out baseCol2);
 
-            string strConnection = "Provider = Microsoft.ACE.OLEDB.12.0;";
-            strConnection += @"Data Source = F:/report.accdb ";
+            string strConnection = "Provider = Microsoft.ACE.OLEDB.12.0;Data Source = F:/report.accdb";
             using (OleDbConnection objConnection = new OleDbConnection(strConnection))
             {
                 objConnection.Open();
 
-                string distId = "0", businessId = "0";
+                string distId;
 
                 // 查询地区ID
                 OleDbCommand sqlcmd = new OleDbCommand();
                 sqlcmd.CommandText = string.Format("SELECT ID FROM DistInfo WHERE Title = '{0}'", distName);
                 sqlcmd.Connection = objConnection;
-                using (OleDbDataReader reader = sqlcmd.ExecuteReader()) 
+                using (OleDbDataReader reader = sqlcmd.ExecuteReader())
                 {
                     if (reader.Read())
                     {
                         distId = reader["ID"].ToString();
                     }
-                }
-
-                // 查询行业ID
-                sqlcmd.CommandText = @"SELECT ID FROM Business WHERE Title = '加工制造业'";
-                using (OleDbDataReader reader = sqlcmd.ExecuteReader())
-                {
-                    if (reader.Read())
-                    {
-                        businessId = reader["ID"].ToString();
-                    }
-                }
-
-                #region 主动监察
-                // 检查单位数
-                int unitCount = 0;
-                int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1]).Text.ToString(), out unitCount);
-                // 结案数量
-                int caseFinishedNum = 0;
-                int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 1]).Text.ToString(), out caseFinishedNum);
-                // 结案涉及人数
-                int personNum = 0;
-                int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 2]).Text.ToString(), out personNum);
-                // 追发工资金额
-                double amount = 0;
-                double.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 3]).Text.ToString(), out amount);
-
-                // 检查是否已存在对应项(Business, Year, Month, Dist)
-                sqlcmd.CommandText = string.Format("SELECT * FROM ZhuDong WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
-                using (OleDbDataReader reader = sqlcmd.ExecuteReader())
-                {
-                    if (reader.Read())
-                    {
-                        sqlcmd.CommandText = string.Format("UPDATE ZhuDong SET UnitCount = {0}, CaseFinishedNum = {1}, PersonNum = {2}, Amount = {3} WHERE Business = {4} AND Y = {5} AND M = {6} AND Dist = {7}",
-                            unitCount.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString(), businessId, year, month, distId);
-                    }
                     else
                     {
-                        sqlcmd.CommandText = string.Format("INSERT INTO ZhuDong(Business,Y,M,Dist,UnitCount,CaseFinishedNum,PersonNum,Amount) VALUES({0},{1},{2},{3},{4},{5},{6},{7})",
-                            businessId, year, month, distId, unitCount.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString());
-                        
+                        return;
                     }
-                    
                 }
-                sqlcmd.ExecuteNonQuery();
-                #endregion
+                
+                ProcessWorksheet1(year, month, worksheet1, baseRow1, baseCol1, distId, "加工制造业", sqlcmd);
+                baseRow1++;
+                ProcessJianZhu(year, month, worksheet1, worksheet2, baseRow1, baseCol1, baseRow2, baseCol2, distId, sqlcmd);
+                baseRow1++;
+                ProcessWorksheet1(year, month, worksheet1, baseRow1, baseCol1, distId, "批发零售业", sqlcmd);
+                baseRow1++;
+                ProcessWorksheet1(year, month, worksheet1, baseRow1, baseCol1, distId, "餐饮住宿业", sqlcmd);
+                baseRow1++;
+                ProcessWorksheet1(year, month, worksheet1, baseRow1, baseCol1, distId, "居民服务业", sqlcmd);
+                baseRow1++;
+                ProcessWorksheet1(year, month, worksheet1, baseRow1, baseCol1, distId, "其它", sqlcmd);
 
-                #region 投诉举报
-                // 立案案件数
-                int caseAllNum = 0;
-                int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 4]).Text.ToString(), out caseAllNum);
-                // 结案数量
-                int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 5]).Text.ToString(), out caseFinishedNum);
-                // 涉及人数
-                int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 6]).Text.ToString(), out personNum);
-                // 追发工资金额
-                double.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 7]).Text.ToString(), out amount);
-
-                // 检查是否已存在对应项(Business, Year, Month, Dist)
-                sqlcmd.CommandText = string.Format("SELECT * FROM TouSu WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
-                using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+                if (workSheetCount < 3)
                 {
-                    if (reader.Read())
-                    {
-                        sqlcmd.CommandText = string.Format("UPDATE TouSu SET CaseAllNum = {0}, CaseFinishedNum = {1}, PersonNum = {2}, Amount = {3} WHERE Business = {4} AND Y = {5} AND M = {6} AND Dist = {7}",
-                            caseAllNum.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString(), businessId, year, month, distId);
-                    }
-                    else
-                    {
-                        sqlcmd.CommandText = string.Format("INSERT INTO TouSu(Business,Y,M,Dist,CaseAllNum,CaseFinishedNum,PersonNum,Amount) VALUES({0},{1},{2},{3},{4},{5},{6},{7})",
-                            businessId, year, month, distId, caseAllNum.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString());
-
-                    }
+                    return;
                 }
-                sqlcmd.ExecuteNonQuery();
-                #endregion
+                worksheet3 = (Excel.Worksheet)workbook.Worksheets[3]; // 农民工30人以上群体性讨要工资案件情况统计表
 
-                #region 突发事件
-                // 案件数
-                int eventNum = 0;
-                int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 8]).Text.ToString(), out eventNum);
-                // 30人以上案件数
-                int bigEventNum = 0;
-                int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 9]).Text.ToString(), out bigEventNum);
-                // 结案数量
-                int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 10]).Text.ToString(), out caseFinishedNum);
-                // 涉及人数
-                int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 11]).Text.ToString(), out personNum);
-                // 追发工资金额
-                double.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 12]).Text.ToString(), out amount);
+                int baseRow3, baseCol3;
+                GetThirdSheetBasePosition(worksheet3, out baseRow3, out baseCol3);
 
-                // 检查是否已存在对应项(Business, Year, Month, Dist)
-                sqlcmd.CommandText = string.Format("SELECT * FROM TuFa WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
-                using (OleDbDataReader reader = sqlcmd.ExecuteReader())
-                {
-                    if (reader.Read())
-                    {
-                        sqlcmd.CommandText = string.Format("UPDATE TuFa SET EventNum = {0}, BigEventNum = {1}, CaseFinishedNum = {2}, PersonNum = {3}, Amount = {4} WHERE Business = {5} AND Y = {6} AND M = {7} AND Dist = {8}",
-                            eventNum.ToString(), bigEventNum.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString(), businessId, year, month, distId);
-                    }
-                    else
-                    {
-                        sqlcmd.CommandText = string.Format("INSERT INTO TuFa(Business,Y,M,Dist,EventNum,BigEventNum,CaseFinishedNum,PersonNum,Amount) VALUES({0},{1},{2},{3},{4},{5},{6},{7},{8})",
-                            businessId, year, month, distId, eventNum.ToString(), bigEventNum.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString());
-
-                    }
-                }
-                sqlcmd.ExecuteNonQuery();
-                #endregion
-
-                #region 案件处理情况
-                // 责令改正
-                int correntNum = 0;
-                int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 13]).Text.ToString(), out correntNum);
-                // 做出行政处理
-                int dealNum = 0;
-                int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 14]).Text.ToString(), out dealNum);
-                // 处罚件数
-                int penalizedNum = 0;
-                int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 15]).Text.ToString(), out penalizedNum);
-                // 涉及人数
-                double penalizedAmount = 0;
-                double.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 16]).Text.ToString(), out penalizedAmount);
-
-                // 检查是否已存在对应项(Business, Year, Month, Dist)
-                sqlcmd.CommandText = string.Format("SELECT * FROM ChuLi WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
-                using (OleDbDataReader reader = sqlcmd.ExecuteReader())
-                {
-                    if (reader.Read())
-                    {
-                        sqlcmd.CommandText = string.Format("UPDATE ChuLi SET CorrectNum = {0}, DealNum = {1}, PenalizedNum = {2}, PenalizedAmount = {3} WHERE Business = {4} AND Y = {5} AND M = {6} AND Dist = {7}",
-                            correntNum.ToString(), dealNum.ToString(), penalizedNum.ToString(), penalizedAmount.ToString(), businessId, year, month, distId);
-                    }
-                    else
-                    {
-                        sqlcmd.CommandText = string.Format("INSERT INTO ChuLi(Business,Y,M,Dist,CorrectNum,DealNum,PenalizedNum,PenalizedAmount) VALUES({0},{1},{2},{3},{4},{5},{6},{7})",
-                            businessId, year, month, distId, correntNum.ToString(), dealNum.ToString(), penalizedNum.ToString(), penalizedAmount.ToString());
-
-                    }
-                }
-                sqlcmd.ExecuteNonQuery();
-                #endregion
+                FillTuFa(year, month, worksheet3, baseRow3, baseCol3, distId, sqlcmd);
             }
-
-            District dist = new District();
-            dist.Name = distName;
-            // 填充加工制造业
-            processItem(worksheet1, baseRow1, baseCol1, ref dist.JiaGong);
-            baseRow1++;
-            // 填充建筑施工业
-            processItem(worksheet1, baseRow1, baseCol1, ref dist.JianZhu);
-            baseRow1++;
-            // 填充批发零售业
-            processItem(worksheet1, baseRow1, baseCol1, ref dist.PiFa);
-            baseRow1++;
-            // 填充餐饮住宿业
-            processItem(worksheet1, baseRow1, baseCol1, ref dist.CanYin);
-            baseRow1++;
-            // 填充居民服务业
-            processItem(worksheet1, baseRow1, baseCol1, ref dist.FuWu);
-            baseRow1++;
-            // 填充其它
-            processItem(worksheet1, baseRow1, baseCol1, ref dist.Other);
-
-            Excel.Worksheet worksheet2 = (Excel.Worksheet)workbook.Worksheets[2]; // 建筑施工企业拖欠农民工工资案件分类情况统计表
-
-            int baseRow2, baseCol2;
-            GetSecondSheetBasePosition(worksheet2, out baseRow2, out baseCol2);
-            // 填充主动监察分类
-            FillReason(worksheet2, baseRow2, baseCol2, ref dist.JianZhu.zhudong.reason);
-            baseRow2++;
-            // 填充投诉举报分类
-            FillReason(worksheet2, baseRow2, baseCol2, ref dist.JianZhu.tousu.reason);
-            baseRow2++;
-            // 填充突发事件分类
-            FillReason(worksheet2, baseRow2, baseCol2, ref dist.JianZhu.tufa.reason);
-
-            try
-            {
-                Excel.Worksheet worksheet3 = (Excel.Worksheet)workbook.Worksheets[3]; // 农民工30人以上群体性讨要工资案件情况统计表
-                if (worksheet3 != null)
-                {
-                    int baseRow3, baseCol3;
-                    GetThirdSheetBasePosition(worksheet3, out baseRow3, out baseCol3);
-
-                    FillTuFa(worksheet3, baseRow3, baseCol3, ref dist);
-                }
-            }
-            catch(Exception)
-            {
-            }
-            
-            distList.Add(dist);
         }
 
-        private static void FillTuFa(Excel.Worksheet worksheet3, int baseRow, int baseCol, ref District dist)
+        private static void ProcessWorksheet1(string year, string month, Excel.Worksheet worksheet, int baseRow, int baseCol, string distId, string businessName, OleDbCommand sqlcmd)
         {
+            // 查询行业ID
+            string businessId;
+            sqlcmd.CommandText = string.Format("SELECT ID FROM Business WHERE Title = '{0}'", businessName);
+            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            {
+                if (reader.Read())
+                {
+                    businessId = reader["ID"].ToString();
+                }
+                else
+                {
+                    return;
+                }
+            }
+
+            #region 主动监察
+            // 检查单位数
+            int unitCount = 0;
+            int.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol]).Text.ToString(), out unitCount);
+            // 结案数量
+            int caseFinishedNum = 0;
+            int.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 1]).Text.ToString(), out caseFinishedNum);
+            // 结案涉及人数
             int personNum = 0;
+            int.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 2]).Text.ToString(), out personNum);
+            // 追发工资金额
+            double amount = 0;
+            double.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 3]).Text.ToString(), out amount);
+
+            // 检查是否已存在对应项(Business, Year, Month, Dist)
+            sqlcmd.CommandText = string.Format("SELECT * FROM ZhuDong WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
+            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            {
+                if (reader.Read())
+                {
+                    sqlcmd.CommandText = string.Format("UPDATE ZhuDong SET UnitCount = {0}, CaseFinishedNum = {1}, PersonNum = {2}, Amount = {3} WHERE Business = {4} AND Y = {5} AND M = {6} AND Dist = {7}",
+                        unitCount.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString(), businessId, year, month, distId);
+                }
+                else
+                {
+                    sqlcmd.CommandText = string.Format("INSERT INTO ZhuDong(Business,Y,M,Dist,UnitCount,CaseFinishedNum,PersonNum,Amount) VALUES({0},{1},{2},{3},{4},{5},{6},{7})",
+                        businessId, year, month, distId, unitCount.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString());
+
+                }
+
+            }
+            sqlcmd.ExecuteNonQuery();
+            #endregion
+
+            #region 投诉举报
+            // 立案案件数
+            int caseAllNum = 0;
+            int.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 4]).Text.ToString(), out caseAllNum);
+            // 结案数量
+            int.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 5]).Text.ToString(), out caseFinishedNum);
+            // 涉及人数
+            int.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 6]).Text.ToString(), out personNum);
+            // 追发工资金额
+            double.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 7]).Text.ToString(), out amount);
+
+            // 检查是否已存在对应项(Business, Year, Month, Dist)
+            sqlcmd.CommandText = string.Format("SELECT * FROM TouSu WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
+            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            {
+                if (reader.Read())
+                {
+                    sqlcmd.CommandText = string.Format("UPDATE TouSu SET CaseAllNum = {0}, CaseFinishedNum = {1}, PersonNum = {2}, Amount = {3} WHERE Business = {4} AND Y = {5} AND M = {6} AND Dist = {7}",
+                        caseAllNum.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString(), businessId, year, month, distId);
+                }
+                else
+                {
+                    sqlcmd.CommandText = string.Format("INSERT INTO TouSu(Business,Y,M,Dist,CaseAllNum,CaseFinishedNum,PersonNum,Amount) VALUES({0},{1},{2},{3},{4},{5},{6},{7})",
+                        businessId, year, month, distId, caseAllNum.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString());
+
+                }
+            }
+            sqlcmd.ExecuteNonQuery();
+            #endregion
+
+            #region 突发事件
+            // 案件数
+            int eventNum = 0;
+            int.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 8]).Text.ToString(), out eventNum);
+            // 30人以上案件数
+            int bigEventNum = 0;
+            int.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 9]).Text.ToString(), out bigEventNum);
+            // 结案数量
+            int.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 10]).Text.ToString(), out caseFinishedNum);
+            // 涉及人数
+            int.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 11]).Text.ToString(), out personNum);
+            // 追发工资金额
+            double.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 12]).Text.ToString(), out amount);
+
+            // 检查是否已存在对应项(Business, Year, Month, Dist)
+            sqlcmd.CommandText = string.Format("SELECT * FROM TuFa WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
+            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            {
+                if (reader.Read())
+                {
+                    sqlcmd.CommandText = string.Format("UPDATE TuFa SET EventNum = {0}, BigEventNum = {1}, CaseFinishedNum = {2}, PersonNum = {3}, Amount = {4} WHERE Business = {5} AND Y = {6} AND M = {7} AND Dist = {8}",
+                        eventNum.ToString(), bigEventNum.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString(), businessId, year, month, distId);
+                }
+                else
+                {
+                    sqlcmd.CommandText = string.Format("INSERT INTO TuFa(Business,Y,M,Dist,EventNum,BigEventNum,CaseFinishedNum,PersonNum,Amount) VALUES({0},{1},{2},{3},{4},{5},{6},{7},{8})",
+                        businessId, year, month, distId, eventNum.ToString(), bigEventNum.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString());
+
+                }
+            }
+            sqlcmd.ExecuteNonQuery();
+            #endregion
+
+            #region 案件处理情况
+            // 责令改正
+            int correntNum = 0;
+            int.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 13]).Text.ToString(), out correntNum);
+            // 做出行政处理
+            int dealNum = 0;
+            int.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 14]).Text.ToString(), out dealNum);
+            // 处罚件数
+            int penalizedNum = 0;
+            int.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 15]).Text.ToString(), out penalizedNum);
+            // 涉及人数
+            double penalizedAmount = 0;
+            double.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 16]).Text.ToString(), out penalizedAmount);
+
+            // 检查是否已存在对应项(Business, Year, Month, Dist)
+            sqlcmd.CommandText = string.Format("SELECT * FROM ChuLi WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
+            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            {
+                if (reader.Read())
+                {
+                    sqlcmd.CommandText = string.Format("UPDATE ChuLi SET CorrectNum = {0}, DealNum = {1}, PenalizedNum = {2}, PenalizedAmount = {3} WHERE Business = {4} AND Y = {5} AND M = {6} AND Dist = {7}",
+                        correntNum.ToString(), dealNum.ToString(), penalizedNum.ToString(), penalizedAmount.ToString(), businessId, year, month, distId);
+                }
+                else
+                {
+                    sqlcmd.CommandText = string.Format("INSERT INTO ChuLi(Business,Y,M,Dist,CorrectNum,DealNum,PenalizedNum,PenalizedAmount) VALUES({0},{1},{2},{3},{4},{5},{6},{7})",
+                        businessId, year, month, distId, correntNum.ToString(), dealNum.ToString(), penalizedNum.ToString(), penalizedAmount.ToString());
+
+                }
+            }
+            sqlcmd.ExecuteNonQuery();
+            #endregion
+        }
+
+        private static void ProcessJianZhu(string year, string month, Excel.Worksheet worksheet1, Excel.Worksheet worksheet2, int baseRow1, int baseCol1, int baseRow2, int baseCol2, string distId, OleDbCommand sqlcmd)
+        {
+            // 查询行业ID
+            string businessId;
+            sqlcmd.CommandText = string.Format("SELECT ID FROM Business WHERE Title = '建筑施工业'");
+            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            {
+                if (reader.Read())
+                {
+                    businessId = reader["ID"].ToString();
+                }
+                else
+                {
+                    return;
+                }
+            }
+
+            #region 主动监察
+            // 检查单位数
+            int unitCount = 0;
+            int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1]).Text.ToString(), out unitCount);
+            // 结案数量
+            int caseFinishedNum = 0;
+            int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 1]).Text.ToString(), out caseFinishedNum);
+            // 结案涉及人数
+            int personNum = 0;
+            int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 2]).Text.ToString(), out personNum);
+            // 追发工资金额
+            double amount = 0;
+            double.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 3]).Text.ToString(), out amount);
+            // 三无工程
+            int sanwu;
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2]).Text.ToString(), out sanwu);
+            // 拖欠工程款
+            int gongchengkuan;
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 1]).Text.ToString(), out gongchengkuan);
+            // 结算纠纷
+            int jieSuan;
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 2]).Text.ToString(), out jieSuan);
+            // 非法转包
+            int zhuanBao;
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 3]).Text.ToString(), out zhuanBao);
+            // 使用零散工
+            int sanGong;
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 4]).Text.ToString(), out sanGong);
+            // 无故拖欠工资
+            int gongZi;
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 5]).Text.ToString(), out gongZi);
+            // 其他原因
+            int other;
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 6]).Text.ToString(), out other);
+
+            // 检查是否已存在对应项(Business, Year, Month, Dist)
+            sqlcmd.CommandText = string.Format("SELECT * FROM ZhuDong WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
+            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            {
+                if (reader.Read())
+                {
+                    sqlcmd.CommandText = string.Format("UPDATE ZhuDong SET UnitCount={0},CaseFinishedNum={1},PersonNum={2},Amount={3},SanWu={4},GongCheng={5},JieSuan={6},ZhuanBao={7},SanGong={8},GongZi={9},Other={10} WHERE Business = {11} AND Y = {12} AND M = {13} AND Dist = {14}",
+                        unitCount.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString(), sanwu.ToString(), gongchengkuan.ToString(), jieSuan.ToString(), 
+                        zhuanBao.ToString(), sanGong.ToString(), gongZi.ToString(), other.ToString(), businessId, year, month, distId);
+                }
+                else
+                {
+                    sqlcmd.CommandText = string.Format("INSERT INTO ZhuDong(Business,Y,M,Dist,UnitCount,CaseFinishedNum,PersonNum,Amount,SanWu,GongCheng,JieSuan,ZhuanBao,SanGong,GongZi,Other) VALUES({0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14})",
+                        businessId, year, month, distId, unitCount.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString(), sanwu.ToString(), gongchengkuan.ToString(),
+                        jieSuan.ToString(), zhuanBao.ToString(), sanGong.ToString(), gongZi.ToString(), other.ToString());
+
+                }
+
+            }
+            sqlcmd.ExecuteNonQuery();
+            #endregion
+
+            baseRow2++;
+
+            #region 投诉举报
+            // 立案案件数
+            int caseAllNum = 0;
+            int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 4]).Text.ToString(), out caseAllNum);
+            // 结案数量
+            int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 5]).Text.ToString(), out caseFinishedNum);
+            // 涉及人数
+            int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 6]).Text.ToString(), out personNum);
+            // 追发工资金额
+            double.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 7]).Text.ToString(), out amount);
+            // 三无工程
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2]).Text.ToString(), out sanwu);
+            // 拖欠工程款
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 1]).Text.ToString(), out gongchengkuan);
+            // 结算纠纷
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 2]).Text.ToString(), out jieSuan);
+            // 非法转包
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 3]).Text.ToString(), out zhuanBao);
+            // 使用零散工
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 4]).Text.ToString(), out sanGong);
+            // 无故拖欠工资
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 5]).Text.ToString(), out gongZi);
+            // 其他原因
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 6]).Text.ToString(), out other);
+
+            // 检查是否已存在对应项(Business, Year, Month, Dist)
+            sqlcmd.CommandText = string.Format("SELECT * FROM TouSu WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
+            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            {
+                if (reader.Read())
+                {
+                    sqlcmd.CommandText = string.Format("UPDATE TouSu SET CaseAllNum = {0}, CaseFinishedNum = {1}, PersonNum = {2}, Amount = {3},SanWu={4},GongCheng={5},JieSuan={6},ZhuanBao={7},SanGong={8},GongZi={9},Other={10} WHERE Business = {11} AND Y = {12} AND M = {13} AND Dist = {14}",
+                        caseAllNum.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString(), sanwu.ToString(), gongchengkuan.ToString(), jieSuan.ToString(),
+                        zhuanBao.ToString(), sanGong.ToString(), gongZi.ToString(), other.ToString(), businessId, year, month, distId);
+                }
+                else
+                {
+                    sqlcmd.CommandText = string.Format("INSERT INTO TouSu(Business,Y,M,Dist,CaseAllNum,CaseFinishedNum,PersonNum,Amount,SanWu,GongCheng,JieSuan,ZhuanBao,SanGong,GongZi,Other) VALUES({0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14})",
+                        businessId, year, month, distId, caseAllNum.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString(), sanwu.ToString(), gongchengkuan.ToString(),
+                        jieSuan.ToString(), zhuanBao.ToString(), sanGong.ToString(), gongZi.ToString(), other.ToString());
+
+                }
+            }
+            sqlcmd.ExecuteNonQuery();
+            #endregion
+
+            baseRow2++;
+
+            #region 突发事件
+            // 案件数
+            int eventNum = 0;
+            int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 8]).Text.ToString(), out eventNum);
+            // 30人以上案件数
+            int bigEventNum = 0;
+            int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 9]).Text.ToString(), out bigEventNum);
+            // 结案数量
+            int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 10]).Text.ToString(), out caseFinishedNum);
+            // 涉及人数
+            int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 11]).Text.ToString(), out personNum);
+            // 追发工资金额
+            double.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 12]).Text.ToString(), out amount);
+            // 三无工程
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2]).Text.ToString(), out sanwu);
+            // 拖欠工程款
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 1]).Text.ToString(), out gongchengkuan);
+            // 结算纠纷
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 2]).Text.ToString(), out jieSuan);
+            // 非法转包
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 3]).Text.ToString(), out zhuanBao);
+            // 使用零散工
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 4]).Text.ToString(), out sanGong);
+            // 无故拖欠工资
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 5]).Text.ToString(), out gongZi);
+            // 其他原因
+            int.TryParse(((Excel.Range)worksheet2.Cells[baseRow2, baseCol2 + 6]).Text.ToString(), out other);
+
+            // 检查是否已存在对应项(Business, Year, Month, Dist)
+            sqlcmd.CommandText = string.Format("SELECT * FROM TuFa WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
+            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            {
+                if (reader.Read())
+                {
+                    sqlcmd.CommandText = string.Format("UPDATE TuFa SET EventNum = {0}, BigEventNum = {1}, CaseFinishedNum = {2}, PersonNum = {3}, Amount = {4}, SanWu={5},GongCheng={6},JieSuan={7},ZhuanBao={8},SanGong={9},GongZi={10},Other={11} WHERE Business = {12} AND Y = {13} AND M = {14} AND Dist = {15}",
+                        eventNum.ToString(), bigEventNum.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString(), sanwu.ToString(), gongchengkuan.ToString(), jieSuan.ToString(),
+                        zhuanBao.ToString(), sanGong.ToString(), gongZi.ToString(), other.ToString(), businessId, year, month, distId);
+                }
+                else
+                {
+                    sqlcmd.CommandText = string.Format("INSERT INTO TuFa(Business,Y,M,Dist,EventNum,BigEventNum,CaseFinishedNum,PersonNum,Amount,SanWu,GongCheng,JieSuan,ZhuanBao,SanGong,GongZi,Other) VALUES({0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14},{15})",
+                        businessId, year, month, distId, eventNum.ToString(), bigEventNum.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString(), sanwu.ToString(), gongchengkuan.ToString(), jieSuan.ToString(),
+                        zhuanBao.ToString(), sanGong.ToString(), gongZi.ToString(), other.ToString());
+
+                }
+            }
+            sqlcmd.ExecuteNonQuery();
+            #endregion
+
+            #region 案件处理情况
+            // 责令改正
+            int correntNum = 0;
+            int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 13]).Text.ToString(), out correntNum);
+            // 做出行政处理
+            int dealNum = 0;
+            int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 14]).Text.ToString(), out dealNum);
+            // 处罚件数
+            int penalizedNum = 0;
+            int.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 15]).Text.ToString(), out penalizedNum);
+            // 涉及人数
+            double penalizedAmount = 0;
+            double.TryParse(((Excel.Range)worksheet1.Cells[baseRow1, baseCol1 + 16]).Text.ToString(), out penalizedAmount);
+
+            // 检查是否已存在对应项(Business, Year, Month, Dist)
+            sqlcmd.CommandText = string.Format("SELECT * FROM ChuLi WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
+            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            {
+                if (reader.Read())
+                {
+                    sqlcmd.CommandText = string.Format("UPDATE ChuLi SET CorrectNum = {0}, DealNum = {1}, PenalizedNum = {2}, PenalizedAmount = {3} WHERE Business = {4} AND Y = {5} AND M = {6} AND Dist = {7}",
+                        correntNum.ToString(), dealNum.ToString(), penalizedNum.ToString(), penalizedAmount.ToString(), businessId, year, month, distId);
+                }
+                else
+                {
+                    sqlcmd.CommandText = string.Format("INSERT INTO ChuLi(Business,Y,M,Dist,CorrectNum,DealNum,PenalizedNum,PenalizedAmount) VALUES({0},{1},{2},{3},{4},{5},{6},{7})",
+                        businessId, year, month, distId, correntNum.ToString(), dealNum.ToString(), penalizedNum.ToString(), penalizedAmount.ToString());
+
+                }
+            }
+            sqlcmd.ExecuteNonQuery();
+            #endregion
+        }
+
+        private static void FillTuFa(string year, string month, Excel.Worksheet worksheet3, int baseRow, int baseCol, string distId, OleDbCommand sqlcmd)
+        {
+            // 清除原来的
+            sqlcmd.CommandText = string.Format("DELETE FROM DistBigEvent WHERE Y = {0} AND M = {1} AND Dist = {2}", year, month, distId);
+            sqlcmd.ExecuteNonQuery();
+
+            int personNum = 0;
+            string project;
             while (true)
             {
-                int.TryParse(((Excel.Range)worksheet3.Cells[baseRow, baseCol]).Text.ToString(), out personNum);
+                project = ((Excel.Range)worksheet3.Cells[baseRow, baseCol]).Text.ToString();
+                int.TryParse(((Excel.Range)worksheet3.Cells[baseRow, baseCol+4]).Text.ToString(), out personNum);
+
                 if (personNum == 0)
                 {
                     break;
                 }
-                dist.tuFaSum.count++;
-                dist.tuFaSum.person += personNum;
+
+                sqlcmd.CommandText = string.Format("INSERT INTO DistBigEvent(Y,M,Dist,Project,PersonNum) VALUES({0},{1},{2},'{3}',{4})", year, month, distId, project, personNum);
+                sqlcmd.ExecuteNonQuery();
+
                 baseRow++;
             }
             
@@ -309,7 +528,7 @@ namespace yingying
         public void GetThirdSheetBasePosition(Excel.Worksheet worksheet, out int baseRow, out int baseCol)
         {
             // 在已使用单元格范围内搜索"涉及人数"，得到的单元格作为列基准
-            Excel.Range findResult = worksheet.UsedRange.Find("涉及人数", Type.Missing, Excel.XlFindLookIn.xlValues, Excel.XlLookAt.xlPart, Excel.XlSearchOrder.xlByRows, Excel.XlSearchDirection.xlNext, false, Type.Missing, Type.Missing);
+            Excel.Range findResult = worksheet.UsedRange.Find("项目名称", Type.Missing, Excel.XlFindLookIn.xlValues, Excel.XlLookAt.xlPart, Excel.XlSearchOrder.xlByRows, Excel.XlSearchDirection.xlNext, false, Type.Missing, Type.Missing);
             baseCol = findResult.Column;
             baseRow = findResult.Row + 1;
         }
@@ -340,33 +559,18 @@ namespace yingying
             baseRow = findResult.Row;
         }
 
-        public void processItem(Excel.Worksheet worksheet, int baseRow, int baseCol, ref Business business)
-        {
-            // 主动监察
-            Int32.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol]).Text.ToString(), out business.zhudong.unitCount);
-            Int32.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 1]).Text.ToString(), out business.zhudong.caseFinishNum);
-            Int32.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 2]).Text.ToString(), out business.zhudong.personNum);
-            Double.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 3]).Text.ToString(), out business.zhudong.amount);
-            // 投诉举报
-            Int32.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 4]).Text.ToString(), out business.tousu.caseAllNum);
-            Int32.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 5]).Text.ToString(), out business.tousu.caseFinishNum);
-            Int32.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 6]).Text.ToString(), out business.tousu.personNum);
-            Double.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 7]).Text.ToString(), out business.tousu.amount);
-            // 突发事件
-            Int32.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 8]).Text.ToString(), out business.tufa.eventNum);
-            Int32.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 9]).Text.ToString(), out business.tufa.bigEventNum);
-            Int32.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 10]).Text.ToString(), out business.tufa.caseFinishNum);
-            Int32.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 11]).Text.ToString(), out business.tufa.personNum);
-            Double.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 12]).Text.ToString(), out business.tufa.amount);
-            // 案件处理情况
-            Int32.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 13]).Text.ToString(), out business.chuli.correctNum);
-            Int32.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 14]).Text.ToString(), out business.chuli.dealNum);
-            Int32.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 15]).Text.ToString(), out business.chuli.penalizeNum);
-            Double.TryParse(((Excel.Range)worksheet.Cells[baseRow, baseCol + 17]).Text.ToString(), out business.chuli.penalizeAmount);
-        }
-
         private void btnBusinessSum_Click(object sender, EventArgs e)
         {
+            if (cbYear.SelectedItem == null)
+            {
+                MessageBox.Show("请选择报表月份");
+                return;
+            }
+            else
+            {
+                reportYear = cbYear.Text;
+            }
+
             if (cbMonth.SelectedItem == null)
             {
                 MessageBox.Show("请选择报表月份");
@@ -374,7 +578,173 @@ namespace yingying
             }
             else
             {
-                thisMonth = cbMonth.SelectedItem.ToString();
+                reportMonth = cbMonth.Text;
+            }
+
+            int caseFinishedNum = 0;
+            int personNum = 0;
+            double amount = 0.0;
+            string output;
+            string strConnection = "Provider = Microsoft.ACE.OLEDB.12.0;Data Source = F:/report.accdb";
+            using (OleDbConnection objConnection = new OleDbConnection(strConnection))
+            {
+                objConnection.Open();
+                OleDbCommand sqlcmd = new OleDbCommand();
+
+                #region 案件总数和同比
+                // 计算报表月案件总数
+                sqlcmd.Parameters.Add("year", OleDbType.Integer).Value = int.Parse(reportYear);
+                sqlcmd.Parameters.Add("month", OleDbType.Integer).Value = int.Parse(reportMonth);
+                sqlcmd.CommandText = "CaseFinishedSum";
+                sqlcmd.CommandType = CommandType.StoredProcedure;
+                sqlcmd.Connection = objConnection;
+
+                using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+                {
+                    if (reader.Read())
+                    {
+                        caseFinishedNum = int.Parse(reader["casefinishednum"].ToString());
+                    }
+                    else
+                    {
+                        return;
+                    }
+                }
+
+                // 更新历史表
+                sqlcmd.Parameters.Clear();
+                sqlcmd.CommandText = string.Format("SELECT * FROM History WHERE Y = {0} AND M = {1}", reportYear, reportMonth);
+                sqlcmd.CommandType = CommandType.Text;
+
+                using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+                {
+                    if (reader.Read())
+                    {
+                        sqlcmd.CommandText = string.Format("UPDATE History SET CaseSum = {0} WHERE Y = {1} AND M = {2}", caseFinishedNum, reportYear, reportMonth);
+                    }
+                    else
+                    {
+                        sqlcmd.CommandText = string.Format("INSERT INTO History(Y, M, CaseSum) VALUES({0}, {1}, {2})", reportYear, reportMonth, caseFinishedNum);
+                    }
+                }
+                sqlcmd.ExecuteNonQuery();
+
+                // 查询同比数据
+                string lastCaseData;
+                sqlcmd.CommandText = string.Format("SELECT CaseSum FROM History WHERE Y = {0} AND M = {1}", int.Parse(reportYear) - 1, reportMonth);
+                using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+                {
+                    if (reader.Read())
+                    {
+                        lastCaseData = reader["CaseSum"].ToString();
+                    }
+                    else
+                    {
+                        return;
+                    }
+                }
+
+                // 计算案件同比
+                double caseYearRise = CalculateYearRise(caseFinishedNum, double.Parse(lastCaseData));
+                string caseYearRiseString = GetYearRiseString(caseYearRise);
+                #endregion
+
+                #region 人数总数和同比
+                // 计算报表月人数总数
+                sqlcmd.Parameters.Add("year", OleDbType.Integer).Value = int.Parse(reportYear);
+                sqlcmd.Parameters.Add("month", OleDbType.Integer).Value = int.Parse(reportMonth);
+                sqlcmd.CommandText = "PersonSum";
+                sqlcmd.CommandType = CommandType.StoredProcedure;
+
+                using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+                {
+                    if (reader.Read())
+                    {
+                        personNum = int.Parse(reader["PersonNum"].ToString());
+                    }
+                    else
+                    {
+                        return;
+                    }
+                }
+
+                // 更新历史表
+                sqlcmd.Parameters.Clear();
+                sqlcmd.CommandType = CommandType.Text;
+                sqlcmd.CommandText = string.Format("UPDATE History SET PersonSum = {0} WHERE Y = {1} AND M = {2}", personNum, reportYear, reportMonth);
+                sqlcmd.ExecuteNonQuery();
+
+                // 查询同比数据
+                string lastPersonData;
+                sqlcmd.CommandText = string.Format("SELECT PersonSum FROM History WHERE Y = {0} AND M = {1}", int.Parse(reportYear) - 1, reportMonth);
+                using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+                {
+                    if (reader.Read())
+                    {
+                        lastPersonData = reader["PersonSum"].ToString();
+                    }
+                    else
+                    {
+                        return;
+                    }
+                }
+
+                // 计算人数同比
+                double personYearRise = CalculateYearRise(personNum, double.Parse(lastPersonData));
+                #endregion
+
+                #region 工资总数和同比
+                // 计算报表月工资总数
+                sqlcmd.Parameters.Add("year", OleDbType.Integer).Value = int.Parse(reportYear);
+                sqlcmd.Parameters.Add("month", OleDbType.Integer).Value = int.Parse(reportMonth);
+                sqlcmd.CommandText = "AmountSum";
+                sqlcmd.CommandType = CommandType.StoredProcedure;
+
+                using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+                {
+                    if (reader.Read())
+                    {
+                        amount = double.Parse(reader["Amount"].ToString());
+                    }
+                    else
+                    {
+                        return;
+                    }
+                }
+
+                // 更新历史表
+                sqlcmd.Parameters.Clear();
+                sqlcmd.CommandType = CommandType.Text;
+                sqlcmd.CommandText = string.Format("UPDATE History SET AmountSum = {0} WHERE Y = {1} AND M = {2}", amount, reportYear, reportMonth);
+                sqlcmd.ExecuteNonQuery();
+
+                // 查询同比数据
+                string lastAmountData;
+                sqlcmd.CommandText = string.Format("SELECT AmountSum FROM History WHERE Y = {0} AND M = {1}", int.Parse(reportYear) - 1, reportMonth);
+                using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+                {
+                    if (reader.Read())
+                    {
+                        lastAmountData = reader["AmountSum"].ToString();
+                    }
+                    else
+                    {
+                        return;
+                    }
+                }
+
+                // 计算人数同比
+                double amountYearRise = CalculateYearRise(amount, double.Parse(lastAmountData));
+                #endregion
+
+                string personAndMoneyRiseString = GetDoubleRiseString(personYearRise, amountYearRise);
+
+                // 生成文本
+                // 第一部分
+                output = "二、拖欠农民工工资案件情况\r\n（一）查处拖欠农民工工资案件情况\r\n";
+                output += reportMonth + "份共查处用人单位拖欠农民工工资案件" + caseFinishedNum + "件，" + caseYearRiseString + "；共为" + personNum + "名农民工追发工资"
+                    + Math.Round(amount, 2, MidpointRounding.AwayFromZero) + "万元，" + personAndMoneyRiseString + "。\r\n\r\n";
+                output += "图4：全市各月查处拖欠农民工工资案件数量图\r\n(见数据库History表)\r\n";
             }
 
             businessSumList = new List<BusinessSum>();
@@ -386,9 +756,9 @@ namespace yingying
             UpdateFuWuSum();
             UpdateOtherSum();
 
-            int caseFinishedNum = 0, jianZhuCaseFinishedNum = 0;
-            int personNum = 0, jianZhuPersonNum = 0;
-            double amount = 0.0, jianZhuAmount = 0.0;
+            int jianZhuCaseFinishedNum = 0;
+            int jianZhuPersonNum = 0;
+            double jianZhuAmount = 0.0;
 
             foreach (BusinessSum b in businessSumList)
             {
@@ -403,28 +773,6 @@ namespace yingying
                 }
             }
 
-            // 计算案件数据
-            List<Array> caseHistoryList;
-            double lastCaseData;
-            ProcessHistoryData("case_history.csv", caseFinishedNum, out caseHistoryList, out lastCaseData);
-            UpdateNewData("case_history.csv", caseHistoryList);
-            double caseYearRise = CalculateYearRise(caseFinishedNum, lastCaseData);
-            string caseYearRiseString = GetYearRiseString(caseYearRise);
-
-            // 计算民工数
-            List<Array> personHistoryList;
-            double lastPersonData;
-            ProcessHistoryData("person_history.csv", personNum, out personHistoryList, out lastPersonData);
-            UpdateNewData("person_history.csv", personHistoryList);
-            double personYearRise = CalculateYearRise(personNum, lastPersonData);
-
-            // 计算工资数据
-            List<Array> moneyHistoryList;
-            double lastMoneyData;
-            ProcessHistoryData("money_history.csv", amount, out moneyHistoryList, out lastMoneyData);
-            UpdateNewData("money_history.csv", personHistoryList);
-            double moneyYearRise = CalculateYearRise(amount, lastMoneyData);
-
             // 计算建筑行业数据
             List<Array> jianZhuCaseHistoryList;
             double lastJianZhuCaseData;
@@ -433,27 +781,18 @@ namespace yingying
             double jianZhuCaseYearRise = CalculateYearRise(jianZhuCaseFinishedNum, lastJianZhuCaseData);
             string jianZhuCaseYearRiseString = GetYearRiseString(jianZhuCaseYearRise);
 
-            // 生成文本
-            // 第一部分
-            string output = "二、拖欠农民工工资案件情况\r\n（一）查处拖欠农民工工资案件情况\r\n";
-
-            string personAndMoneyRiseString = GetDoubleRiseString(personYearRise, moneyYearRise);
-            output += thisMonth + "份共查处用人单位拖欠农民工工资案件" + caseFinishedNum + "件，" + caseYearRiseString + "；共为" + personNum + "名农民工追发工资"
-            + Math.Round(amount, 2, MidpointRounding.AwayFromZero) + "万元，" + personAndMoneyRiseString + "。\r\n\r\n";
-
-            output += "图4：全市各月查处拖欠农民工工资案件数量图\r\n";
             string lastYear = (DateTime.Now.Year - 1).ToString();
-            foreach (string[] arr in caseHistoryList)
-            {
-                if (arr[0] == lastYear || arr[0] == DateTime.Now.Year.ToString()) 
-                {
-                    output += string.Join(",", arr);
-                }
-                output += "\r\n";
-            }
-            output += "\r\n";
+            //foreach (string[] arr in caseHistoryList)
+            //{
+            //    if (arr[0] == lastYear || arr[0] == DateTime.Now.Year.ToString()) 
+            //    {
+            //        output += string.Join(",", arr);
+            //    }
+            //    output += "\r\n";
+            //}
+            //output += "\r\n";
 
-            output += "图5：" + thisMonth + "份全市查处拖欠农民工工资案件\r\n按行业分类数量、占总数比例、与同期对比表\r\n";
+            output += "图5：" + reportMonth + "份全市查处拖欠农民工工资案件\r\n按行业分类数量、占总数比例、与同期对比表\r\n";
 
             List<Array> caseFenLeiLastYearHistoryList;
             ProcessFenLeiLastYear("case", out caseFenLeiLastYearHistoryList);
