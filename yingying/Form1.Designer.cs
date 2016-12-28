@@ -43,6 +43,7 @@
             this.label5 = new System.Windows.Forms.Label();
             this.cbYear = new System.Windows.Forms.ComboBox();
             this.label6 = new System.Windows.Forms.Label();
+            this.lblCurrentFile = new System.Windows.Forms.Label();
             this.SuspendLayout();
             // 
             // btnImport
@@ -224,11 +225,20 @@
             this.label6.TabIndex = 14;
             this.label6.Text = "年";
             // 
+            // lblCurrentFile
+            // 
+            this.lblCurrentFile.AutoSize = true;
+            this.lblCurrentFile.Location = new System.Drawing.Point(12, 486);
+            this.lblCurrentFile.Name = "lblCurrentFile";
+            this.lblCurrentFile.Size = new System.Drawing.Size(0, 12);
+            this.lblCurrentFile.TabIndex = 15;
+            // 
             // Form1
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 12F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(610, 545);
+            this.Controls.Add(this.lblCurrentFile);
             this.Controls.Add(this.label6);
             this.Controls.Add(this.cbYear);
             this.Controls.Add(this.label5);
@@ -269,6 +279,7 @@
         private System.Windows.Forms.Label label5;
         private System.Windows.Forms.ComboBox cbYear;
         private System.Windows.Forms.Label label6;
+        private System.Windows.Forms.Label lblCurrentFile;
     }
 }
 

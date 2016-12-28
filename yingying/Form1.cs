@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
 using System.Data.OleDb;
+using System.Data.SqlClient;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -50,24 +51,37 @@ namespace yingying
             Excel.Application excel = new Excel.Application();
             object missing = System.Reflection.Missing.Value;
             Excel.Workbook workbook;
-
-            foreach (string file in dlg.FileNames)
+            string strConnection = "Data Source=;Initial Catalog=report;User Id=sa;Password=tony2684I8c;";
+            using (SqlConnection conn = new SqlConnection(strConnection))
             {
-                progressBar1.Value++;
-                // 打开工作簿
-                workbook = excel.Workbooks.Open(file, missing, true, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing);
-                // 根据文件名得到区名
-                string distName = Path.GetFileNameWithoutExtension(file);
-                // 得到指定的工作表
+                conn.Open();
 
-                FillDatabase(workbook, distName, year, month);
+                #region 数据库状态复位
+                SqlCommand sqlcmd = new SqlCommand();
+                sqlcmd.CommandText = string.Format("DELETE FROM BusinessHistory WHERE Y = {0} AND M = {1}", year, month);
+                sqlcmd.Connection = conn;
+                sqlcmd.ExecuteNonQuery();
+                #endregion
 
-                workbook.Close(false);
+                foreach (string file in dlg.FileNames)
+                {
+                    lblCurrentFile.Text = file;
+                    progressBar1.Value++;
+                    // 打开工作簿
+                    workbook = excel.Workbooks.Open(file, missing, true, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing);
+                    // 根据文件名得到区名
+                    string distName = Path.GetFileNameWithoutExtension(file);
+                    // 得到指定的工作表
+
+                    FillDatabase(conn, workbook, distName, year, month);
+
+                    workbook.Close(false);
+                }
             }
             MessageBox.Show("All file imported.");
         }
 
-        private void FillDatabase(Excel.Workbook workbook, string distName, string year, string month)
+        private void FillDatabase(SqlConnection objConnection, Excel.Workbook workbook, string distName, string year, string month)
         {
             int workSheetCount = workbook.Worksheets.Count;
             Excel.Worksheet worksheet1, worksheet2, worksheet3;
@@ -84,60 +98,54 @@ namespace yingying
             int baseRow2, baseCol2;
             GetSecondSheetBasePosition(worksheet2, out baseRow2, out baseCol2);
 
-            string strConnection = "Provider = Microsoft.ACE.OLEDB.12.0;Data Source = F:/report.accdb";
-            using (OleDbConnection objConnection = new OleDbConnection(strConnection))
+            string distId;
+
+            // 查询地区ID
+            SqlCommand sqlcmd = new SqlCommand();
+            sqlcmd.CommandText = string.Format("SELECT ID FROM DistInfo WHERE Title = '{0}'", distName);
+            sqlcmd.Connection = objConnection;
+            using (SqlDataReader reader = sqlcmd.ExecuteReader())
             {
-                objConnection.Open();
-
-                string distId;
-
-                // 查询地区ID
-                OleDbCommand sqlcmd = new OleDbCommand();
-                sqlcmd.CommandText = string.Format("SELECT ID FROM DistInfo WHERE Title = '{0}'", distName);
-                sqlcmd.Connection = objConnection;
-                using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+                if (reader.Read())
                 {
-                    if (reader.Read())
-                    {
-                        distId = reader["ID"].ToString();
-                    }
-                    else
-                    {
-                        return;
-                    }
+                    distId = reader["ID"].ToString();
                 }
-                
-                ProcessWorksheet1(year, month, worksheet1, baseRow1, baseCol1, distId, "加工制造业", sqlcmd);
-                baseRow1++;
-                ProcessJianZhu(year, month, worksheet1, worksheet2, baseRow1, baseCol1, baseRow2, baseCol2, distId, sqlcmd);
-                baseRow1++;
-                ProcessWorksheet1(year, month, worksheet1, baseRow1, baseCol1, distId, "批发零售业", sqlcmd);
-                baseRow1++;
-                ProcessWorksheet1(year, month, worksheet1, baseRow1, baseCol1, distId, "餐饮住宿业", sqlcmd);
-                baseRow1++;
-                ProcessWorksheet1(year, month, worksheet1, baseRow1, baseCol1, distId, "居民服务业", sqlcmd);
-                baseRow1++;
-                ProcessWorksheet1(year, month, worksheet1, baseRow1, baseCol1, distId, "其它", sqlcmd);
-
-                if (workSheetCount < 3)
+                else
                 {
                     return;
                 }
-                worksheet3 = (Excel.Worksheet)workbook.Worksheets[3]; // 农民工30人以上群体性讨要工资案件情况统计表
-
-                int baseRow3, baseCol3;
-                GetThirdSheetBasePosition(worksheet3, out baseRow3, out baseCol3);
-
-                FillTuFa(year, month, worksheet3, baseRow3, baseCol3, distId, sqlcmd);
             }
+
+            ProcessWorksheet1(year, month, worksheet1, baseRow1, baseCol1, distId, "加工制造业", sqlcmd);
+            baseRow1++;
+            ProcessJianZhu(year, month, worksheet1, worksheet2, baseRow1, baseCol1, baseRow2, baseCol2, distId, sqlcmd);
+            baseRow1++;
+            ProcessWorksheet1(year, month, worksheet1, baseRow1, baseCol1, distId, "批发零售业", sqlcmd);
+            baseRow1++;
+            ProcessWorksheet1(year, month, worksheet1, baseRow1, baseCol1, distId, "餐饮住宿业", sqlcmd);
+            baseRow1++;
+            ProcessWorksheet1(year, month, worksheet1, baseRow1, baseCol1, distId, "居民服务业", sqlcmd);
+            baseRow1++;
+            ProcessWorksheet1(year, month, worksheet1, baseRow1, baseCol1, distId, "其它", sqlcmd);
+
+            if (workSheetCount < 3)
+            {
+                return;
+            }
+            worksheet3 = (Excel.Worksheet)workbook.Worksheets[3]; // 农民工30人以上群体性讨要工资案件情况统计表
+
+            //int baseRow3, baseCol3;
+            //GetThirdSheetBasePosition(worksheet3, out baseRow3, out baseCol3);
+
+            //FillTuFa(year, month, worksheet3, baseRow3, baseCol3, distId, sqlcmd);
         }
 
-        private static void ProcessWorksheet1(string year, string month, Excel.Worksheet worksheet, int baseRow, int baseCol, string distId, string businessName, OleDbCommand sqlcmd)
+        private static void ProcessWorksheet1(string year, string month, Excel.Worksheet worksheet, int baseRow, int baseCol, string distId, string businessName, SqlCommand sqlcmd)
         {
             // 查询行业ID
             string businessId;
             sqlcmd.CommandText = string.Format("SELECT ID FROM Business WHERE Title = '{0}'", businessName);
-            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            using (SqlDataReader reader = sqlcmd.ExecuteReader())
             {
                 if (reader.Read())
                 {
@@ -165,7 +173,7 @@ namespace yingying
 
             // 检查是否已存在对应项(Business, Year, Month, Dist)
             sqlcmd.CommandText = string.Format("SELECT * FROM ZhuDong WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
-            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            using (SqlDataReader reader = sqlcmd.ExecuteReader())
             {
                 if (reader.Read())
                 {
@@ -176,9 +184,24 @@ namespace yingying
                 {
                     sqlcmd.CommandText = string.Format("INSERT INTO ZhuDong(Business,Y,M,Dist,UnitCount,CaseFinishedNum,PersonNum,Amount) VALUES({0},{1},{2},{3},{4},{5},{6},{7})",
                         businessId, year, month, distId, unitCount.ToString(), caseFinishedNum.ToString(), personNum.ToString(), amount.ToString());
-
                 }
+            }
+            sqlcmd.ExecuteNonQuery();
 
+            // 更新分行业历史表
+            sqlcmd.CommandText = string.Format("SELECT * FROM BusinessHistory WHERE BusinessId = {0} AND Y = {1} AND M = {2}", businessId, year, month);
+            using (SqlDataReader reader = sqlcmd.ExecuteReader())
+            {
+                if (reader.Read())
+                {
+                    sqlcmd.CommandText = string.Format("UPDATE BusinessHistory SET CaseNum = CaseNum + {0}, PersonNum = PersonNum + {1}, Amount = Amount +{2} WHERE BusinessId = {3} AND Y = {4} AND M = {5}",
+                        caseFinishedNum.ToString(), personNum.ToString(), amount.ToString(), businessId, year, month);
+                }
+                else
+                {
+                    sqlcmd.CommandText = string.Format("INSERT INTO BusinessHistory(BusinessId,Y,M,CaseNum,PersonNum,Amount) VALUES({0},{1},{2},{3},{4},{5})",
+                        businessId, year, month, caseFinishedNum.ToString(), personNum.ToString(), amount.ToString());
+                }
             }
             sqlcmd.ExecuteNonQuery();
             #endregion
@@ -196,7 +219,7 @@ namespace yingying
 
             // 检查是否已存在对应项(Business, Year, Month, Dist)
             sqlcmd.CommandText = string.Format("SELECT * FROM TouSu WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
-            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            using (SqlDataReader reader = sqlcmd.ExecuteReader())
             {
                 if (reader.Read())
                 {
@@ -210,6 +233,11 @@ namespace yingying
 
                 }
             }
+            sqlcmd.ExecuteNonQuery();
+
+            // 更新分行业历史表
+            sqlcmd.CommandText = string.Format("UPDATE BusinessHistory SET CaseNum = CaseNum + {0}, PersonNum = PersonNum + {1}, Amount = Amount +{2} WHERE BusinessId = {3} AND Y = {4} AND M = {5}",
+                        caseFinishedNum.ToString(), personNum.ToString(), amount.ToString(), businessId, year, month);
             sqlcmd.ExecuteNonQuery();
             #endregion
 
@@ -229,7 +257,7 @@ namespace yingying
 
             // 检查是否已存在对应项(Business, Year, Month, Dist)
             sqlcmd.CommandText = string.Format("SELECT * FROM TuFa WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
-            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            using (SqlDataReader reader = sqlcmd.ExecuteReader())
             {
                 if (reader.Read())
                 {
@@ -262,7 +290,7 @@ namespace yingying
 
             // 检查是否已存在对应项(Business, Year, Month, Dist)
             sqlcmd.CommandText = string.Format("SELECT * FROM ChuLi WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
-            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            using (SqlDataReader reader = sqlcmd.ExecuteReader())
             {
                 if (reader.Read())
                 {
@@ -280,12 +308,12 @@ namespace yingying
             #endregion
         }
 
-        private static void ProcessJianZhu(string year, string month, Excel.Worksheet worksheet1, Excel.Worksheet worksheet2, int baseRow1, int baseCol1, int baseRow2, int baseCol2, string distId, OleDbCommand sqlcmd)
+        private static void ProcessJianZhu(string year, string month, Excel.Worksheet worksheet1, Excel.Worksheet worksheet2, int baseRow1, int baseCol1, int baseRow2, int baseCol2, string distId, SqlCommand sqlcmd)
         {
             // 查询行业ID
             string businessId;
             sqlcmd.CommandText = string.Format("SELECT ID FROM Business WHERE Title = '建筑施工业'");
-            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            using (SqlDataReader reader = sqlcmd.ExecuteReader())
             {
                 if (reader.Read())
                 {
@@ -334,7 +362,7 @@ namespace yingying
 
             // 检查是否已存在对应项(Business, Year, Month, Dist)
             sqlcmd.CommandText = string.Format("SELECT * FROM ZhuDong WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
-            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            using (SqlDataReader reader = sqlcmd.ExecuteReader())
             {
                 if (reader.Read())
                 {
@@ -350,6 +378,23 @@ namespace yingying
 
                 }
 
+            }
+            sqlcmd.ExecuteNonQuery();
+
+            // 更新分行业历史表
+            sqlcmd.CommandText = string.Format("SELECT * FROM BusinessHistory WHERE BusinessId = {0} AND Y = {1} AND M = {2}", businessId, year, month);
+            using (SqlDataReader reader = sqlcmd.ExecuteReader())
+            {
+                if (reader.Read())
+                {
+                    sqlcmd.CommandText = string.Format("UPDATE BusinessHistory SET CaseNum = CaseNum + {0}, PersonNum = PersonNum + {1}, Amount = Amount +{2} WHERE BusinessId = {3} AND Y = {4} AND M = {5}",
+                        caseFinishedNum.ToString(), personNum.ToString(), amount.ToString(), businessId, year, month);
+                }
+                else
+                {
+                    sqlcmd.CommandText = string.Format("INSERT INTO BusinessHistory(BusinessId,Y,M,CaseNum,PersonNum,Amount) VALUES({0},{1},{2},{3},{4},{5})",
+                        businessId, year, month, caseFinishedNum.ToString(), personNum.ToString(), amount.ToString());
+                }
             }
             sqlcmd.ExecuteNonQuery();
             #endregion
@@ -383,7 +428,7 @@ namespace yingying
 
             // 检查是否已存在对应项(Business, Year, Month, Dist)
             sqlcmd.CommandText = string.Format("SELECT * FROM TouSu WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
-            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            using (SqlDataReader reader = sqlcmd.ExecuteReader())
             {
                 if (reader.Read())
                 {
@@ -399,6 +444,11 @@ namespace yingying
 
                 }
             }
+            sqlcmd.ExecuteNonQuery();
+
+            // 更新分行业历史表
+            sqlcmd.CommandText = string.Format("UPDATE BusinessHistory SET CaseNum = CaseNum + {0}, PersonNum = PersonNum + {1}, Amount = Amount +{2} WHERE BusinessId = {3} AND Y = {4} AND M = {5}",
+                        caseFinishedNum.ToString(), personNum.ToString(), amount.ToString(), businessId, year, month);
             sqlcmd.ExecuteNonQuery();
             #endregion
 
@@ -434,7 +484,7 @@ namespace yingying
 
             // 检查是否已存在对应项(Business, Year, Month, Dist)
             sqlcmd.CommandText = string.Format("SELECT * FROM TuFa WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
-            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            using (SqlDataReader reader = sqlcmd.ExecuteReader())
             {
                 if (reader.Read())
                 {
@@ -469,7 +519,7 @@ namespace yingying
 
             // 检查是否已存在对应项(Business, Year, Month, Dist)
             sqlcmd.CommandText = string.Format("SELECT * FROM ChuLi WHERE Business = {0} AND Y = {1} AND M = {2} AND Dist = {3}", businessId, year, month, distId);
-            using (OleDbDataReader reader = sqlcmd.ExecuteReader())
+            using (SqlDataReader reader = sqlcmd.ExecuteReader())
             {
                 if (reader.Read())
                 {
@@ -487,7 +537,7 @@ namespace yingying
             #endregion
         }
 
-        private static void FillTuFa(string year, string month, Excel.Worksheet worksheet3, int baseRow, int baseCol, string distId, OleDbCommand sqlcmd)
+        private static void FillTuFa(string year, string month, Excel.Worksheet worksheet3, int baseRow, int baseCol, string distId, SqlCommand sqlcmd)
         {
             // 清除原来的
             sqlcmd.CommandText = string.Format("DELETE FROM DistBigEvent WHERE Y = {0} AND M = {1} AND Dist = {2}", year, month, distId);
