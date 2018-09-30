@@ -1,4 +1,5 @@
-﻿using System;
+﻿using MySql.Data.MySqlClient;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -992,7 +993,7 @@ namespace yingying
                 output += d.Name + ", " + d.tuFaSum.count + "\r\n";
             }
 
-            txtOutput.Text = output;
+            txtSec1.Text = output;
         }
 
         private static string GetDoubleRiseString(double yearRise1, double yearRise2)
@@ -1263,13 +1264,95 @@ namespace yingying
             //cbMonth.SelectedIndex = now.Month - 1;
         }
 
+        private void btnNAS_Click(object sender, EventArgs e)
+        {
+            if (cbYear.SelectedItem == null)
+            {
+                MessageBox.Show("请选择报表月份");
+                return;
+            }
+            else
+            {
+                reportYear = cbYear.Text;
+            }
+
+            if (cbMonth.SelectedItem == null)
+            {
+                MessageBox.Show("请选择报表月份");
+                return;
+            }
+            else
+            {
+                reportMonth = cbMonth.Text;
+            }
+
+            string connStr = "server=192.168.50.191;user=root;database=report;port=3307;password=tony2684I8c;SslMode=none";
+            MySqlConnection conn = new MySqlConnection(connStr);
+            try
+            {
+                Console.WriteLine("Connecting to MySQL...");
+                conn.Open();
+                // Perform database operations
+
+                string rtn = "sp_OutputReport";
+                MySqlCommand cmd = new MySqlCommand(rtn, conn);
+                cmd.CommandType = CommandType.StoredProcedure;
+                cmd.Parameters.AddWithValue("@year", reportYear);
+                cmd.Parameters.AddWithValue("@this_month", reportMonth);
+
+                MySqlDataReader rdr = cmd.ExecuteReader();
+                
+                while (rdr.Read())
+                {
+                    Console.WriteLine(rdr[0]);
+                    txtSec1.Text = rdr[0].ToString();
+                    if (rdr.NextResult())
+                    {
+                        while (rdr.Read())
+                        {
+                            Console.WriteLine(rdr[0]);
+                            if (rdr.NextResult())
+                            {
+                                while (rdr.Read())
+                                {
+                                    Console.WriteLine(rdr[0]);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                rdr.Close();
+
+                rtn = "sp_GenerateCaseTable";
+                cmd = new MySqlCommand(rtn, conn);
+                cmd.CommandType = CommandType.StoredProcedure;
+                cmd.Parameters.AddWithValue("@year", reportYear);
+                cmd.Parameters.AddWithValue("@this_month", reportMonth);
+
+                MySqlDataAdapter da = new MySqlDataAdapter(cmd);
+                DataSet ds = new DataSet();
+                da.Fill(ds);
+
+                dgvGenerateCaseTable.DataSource = ds.Tables[0].DefaultView;
+
+                
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.ToString());
+            }
+            conn.Close();
+            Console.WriteLine("Done.");
+        }
+
         private void btnExportToWord_Click(object sender, EventArgs e)
         {
             Word.Application word = new Word.Application();
             object missing = System.Reflection.Missing.Value;
             Word.Document doc = word.Documents.Add(ref missing, ref missing, ref missing, ref missing);
             Word.Range range = doc.Paragraphs[1].Range;
-            range.Text = txtOutput.Text;
+            range.Text = txtSec1.Text;
             object fileName = "report.docx";
             doc.SaveAs2(ref fileName, ref missing, ref missing, ref missing, ref missing, ref missing, ref missing, ref missing, ref missing, ref missing, ref missing, ref missing, ref missing, ref missing, ref missing, ref missing, ref missing);
             word.Quit(ref missing, ref missing, ref missing);
